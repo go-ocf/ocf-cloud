@@ -449,6 +449,54 @@ func (s *Subscriptions) cancelSubscription(localSubscriptions *sync.Map, subscri
 	return s.Close(subscriptionID, nil)
 }
 
+func (s *Subscriptions) closeSubscriptions(localSubscriptions *sync.Map) {
+	subs := make([]string, 0, 32)
+	localSubscriptions.Range(func(k interface{}, _ interface{}) bool {
+		subs = append(subs, k.(string))
+		return true
+	})
+
+	for _, sub := range subs {
+		err := s.Close(sub, nil)
+		if err != nil {
+			log.Errorf("cannot close subscription('%s'): %w", sub, err)
+		}
+	}
+}
+
+func (s *Subscriptions) getSubscriptionResponse(req *pb.SubscribeToEvents, localSubscriptions *sync.Map) (*pb.Event, bool) {
+	subRes := &pb.Event{
+		CorrelationId: req.GetCorrelationId(),
+		Type: &pb.Event_OperationProcessed_{
+			OperationProcessed: &pb.Event_OperationProcessed{
+				ErrorStatus: &pb.Event_OperationProcessed_ErrorStatus{
+					Code: pb.Event_OperationProcessed_ErrorStatus_OK,
+				},
+			},
+		},
+	}
+
+	if r := req.GetCancelSubscription(); r != nil {
+		err := s.cancelSubscription(localSubscriptions, r.GetSubscriptionId())
+		if err != nil {
+			subRes.GetOperationProcessed().ErrorStatus.Code = pb.Event_OperationProcessed_ErrorStatus_ERROR
+			subRes.GetOperationProcessed().ErrorStatus.Message = err.Error()
+		}
+		subRes.SubscriptionId = r.GetSubscriptionId()
+		return subRes, false
+	}
+
+	subID, err := uuid.NewV4()
+	if err != nil {
+		subRes.GetOperationProcessed().ErrorStatus.Code = pb.Event_OperationProcessed_ErrorStatus_ERROR
+		subRes.GetOperationProcessed().ErrorStatus.Message = fmt.Sprintf("cannot generate subscription ID: %v", err)
+		return subRes, false
+	}
+
+	subRes.SubscriptionId = subID.String()
+	return subRes, true
+}
+
 func (s *Subscriptions) SubscribeToEvents(resourceProjection *Projection, srv pb.GrpcGateway_SubscribeToEventsServer) error {
 	owner, err := kitNetGrpc.OwnerFromMD(srv.Context())
 	if err != nil {
@@ -456,22 +504,10 @@ func (s *Subscriptions) SubscribeToEvents(resourceProjection *Projection, srv pb
 	}
 
 	var localSubscriptions sync.Map
-	ctx := srv.Context()
 
-	defer func() {
-		subs := make([]string, 0, 32)
-		localSubscriptions.Range(func(k interface{}, _ interface{}) bool {
-			subs = append(subs, k.(string))
-			return true
-		})
-
-		for _, sub := range subs {
-			err := s.Close(sub, nil)
-			if err != nil {
-				log.Errorf("cannot close subscription for events: %v", err)
-			}
-		}
-	}()
+	defer func(sub *sync.Map) {
+		s.closeSubscriptions(sub)
+	}(&localSubscriptions)
 
 	var sendMutex sync.Mutex
 	send := func(e *pb.Event) error {
@@ -481,6 +517,7 @@ func (s *Subscriptions) SubscribeToEvents(resourceProjection *Projection, srv pb
 		return srv.Send(e)
 	}
 
+	ctx := srv.Context()
 	for {
 		subReq, err := srv.Recv()
 		if err == io.EOF {
@@ -491,43 +528,16 @@ func (s *Subscriptions) SubscribeToEvents(resourceProjection *Projection, srv pb
 			return kitNetGrpc.ForwardErrorf(codes.Internal, "cannot receive events: %v", err)
 		}
 
-		subRes := pb.Event{
-			CorrelationId: subReq.CorrelationId,
-			Type: &pb.Event_OperationProcessed_{
-				OperationProcessed: &pb.Event_OperationProcessed{
-					ErrorStatus: &pb.Event_OperationProcessed_ErrorStatus{
-						Code: pb.Event_OperationProcessed_ErrorStatus_OK,
-					},
-				},
-			},
-		}
-
-		if r := subReq.GetCancelSubscription(); r != nil {
-			err := s.cancelSubscription(&localSubscriptions, r.GetSubscriptionId())
-			if err != nil {
-				subRes.GetOperationProcessed().ErrorStatus.Code = pb.Event_OperationProcessed_ErrorStatus_ERROR
-				subRes.GetOperationProcessed().ErrorStatus.Message = err.Error()
-			}
-			subRes.SubscriptionId = r.GetSubscriptionId()
-			if err = send(&subRes); err != nil {
+		subRes, ok := s.getSubscriptionResponse(subReq, &localSubscriptions)
+		if !ok {
+			if err = send(subRes); err != nil {
 				log.Errorf("send failed: %v", err)
 			}
 			continue
 		}
 
-		subID, err := uuid.NewV4()
-		if err != nil {
-			subRes.GetOperationProcessed().ErrorStatus.Code = pb.Event_OperationProcessed_ErrorStatus_ERROR
-			subRes.GetOperationProcessed().ErrorStatus.Message = fmt.Sprintf("cannot generate subscription ID: %v", err)
-			if err = send(&subRes); err != nil {
-				log.Errorf("send failed: %v", err)
-			}
-			continue
-		}
-
-		subRes.SubscriptionId = subID.String()
 		localSubscriptions.Store(subRes.SubscriptionId, true)
-		if err = send(&subRes); err != nil {
+		if err = send(subRes); err != nil {
 			localSubscriptions.Delete(subRes.SubscriptionId)
 			log.Errorf("send failed: %v", err)
 			continue

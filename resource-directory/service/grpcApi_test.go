@@ -466,6 +466,7 @@ func TestRequestHandler_Issue270(t *testing.T) {
 	}
 }
 
+//gocyclo:ignore
 func TestRequestHandler_ValidateEventsFlow(t *testing.T) {
 	deviceID := test.MustFindDeviceByName(test.TestDeviceName)
 	ctx, cancel := context.WithTimeout(context.Background(), TEST_TIMEOUT)
