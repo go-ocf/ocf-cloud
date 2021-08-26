@@ -57,15 +57,7 @@ func New(conn *nats.Conn, jetstream bool, opts ...Option) (*Publisher, error) {
 	for _, o := range opts {
 		o.apply(&cfg)
 	}
-	p, err := newPublisher(conn, jetstream, cfg.dataMarshaler)
-	if err != nil {
-		return nil, err
-	}
-	return p, nil
-}
 
-// NewPublisher creates a publisher.
-func newPublisher(conn *nats.Conn, jetstream bool, eventMarshaler MarshalerFunc) (*Publisher, error) {
 	publish := conn.Publish
 	if jetstream {
 		js, err := conn.JetStream()
@@ -79,7 +71,7 @@ func newPublisher(conn *nats.Conn, jetstream bool, eventMarshaler MarshalerFunc)
 	}
 
 	return &Publisher{
-		dataMarshaler: eventMarshaler,
+		dataMarshaler: cfg.dataMarshaler,
 		conn:          conn,
 		publish:       publish,
 	}, nil
