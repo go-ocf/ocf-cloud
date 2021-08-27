@@ -1,0 +1,107 @@
+{{- if .Values.coapgateway.enabled }}
+{{- $coapGatewayServiceCert := "/certs" }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "plgd-cloud.coapgateway.configSecretName" . }}
+  namespace: {{ .Release.Namespace }}
+stringData:
+  {{ .Values.coapgateway.config.fileName }}: |
+    {{- with .Values.coapgateway }}
+    log:
+      debug: {{ .log.debug }}
+      dumpCoapMessages: {{ .log.dumpCoapMessages }}
+    apis:
+      coap:
+        address: {{ printf "0.0.0.0:%v" .port | quote }}
+        externalAddress: {{ .apis.coap.externalAddress }}
+        maxMessageSize: {{ .apis.coap.maxMessageSize }}
+        goroutineSocketHeartbeat: {{ .apis.coap.goroutineSocketHeartbeat | quote }}
+        keepAlive:
+          timeout: {{ .apis.coap.keepAlive.timeout }}
+        blockwiseTransfer:
+          enabled: {{ .apis.coap.blockwiseTransfer.enabled }}
+          blockSize: {{ .apis.coap.blockwiseTransfer.blockSize | quote }}
+        tls:
+          enabled: {{ .apis.coap.tls.enabled }}
+          {{- if .apis.coap.tls.enabled }}
+          {{- $tls := .apis.coap.tls }}
+          {{- include "plgd-cloud.certificateConfig" (list $ $tls $coapGatewayServiceCert) | indent 8 }}
+          clientCertificateRequired: {{ .apis.coap.tls.clientCertificateRequired }}
+          {{- end }}
+    clients:
+      eventBus:
+        nats:
+          url: {{ printf " " }}{{- include "plgd-cloud.natsUri" (list $ .clients.eventBus.nats.url) | quote }}
+          pendingLimits:
+            msgLimit: {{ .clients.eventBus.nats.pendingLimits.msgLimit }}
+            bytesLimit: {{ printf "%v" .clients.eventBus.nats.pendingLimits.bytesLimit }}
+          tls:
+            {{- $natsTls := .clients.eventBus.nats.tls }}
+            {{- include "plgd-cloud.certificateConfig" (list $ $natsTls $coapGatewayServiceCert) | indent 10 }}
+            useSystemCAPool: {{ .clients.eventBus.nats.tls.useSystemCAPool }}
+      authorizationServer:
+        grpc:
+          {{- $authorizationServer := .clients.authorizationServer.grpc.address }}
+          address:{{ printf " " }}{{- include "plgd-cloud.authorizationAddress" (list $ $authorizationServer ) | quote }}
+          keepAlive:
+            time: {{ .clients.authorizationServer.grpc.keepAlive.timeout }}
+            timeout: {{ .clients.authorizationServer.grpc.keepAlive.timeout }}
+            permitWithoutStream: {{ .clients.authorizationServer.grpc.keepAlive.permitWithoutStream }}
+          tls:
+            {{- $authClientTls := .clients.authorizationServer.grpc.tls }}
+            {{- include "plgd-cloud.certificateConfig" (list $ $authClientTls $coapGatewayServiceCert) | indent 10 }}
+            useSystemCAPool: {{ .clients.authorizationServer.grpc.tls.useSystemCAPool }}
+        oauth:
+          clientID: {{ .clients.authorizationServer.oauth.clientID }}
+          clientSecret: {{ .clients.authorizationServer.oauth.clientSecret }}
+          scopes:
+          {{- range .clients.authorizationServer.oauth.scopes  }}
+            - {{ . | quote }}
+          {{- end }}
+          tokenURL: {{ .clients.authorizationServer.oauth.tokenURL }}
+          audience: {{ .clients.authorizationServer.oauth.audience }}
+          verifyServiceTokenFrequency: {{ .clients.authorizationServer.oauth.verifyServiceTokenFrequency }}
+          http:
+            maxIdleConns: {{ .clients.authorizationServer.oauth.http.maxIdleConns }}
+            maxConnsPerHost: {{ .clients.authorizationServer.oauth.http.maxConnsPerHost }}
+            maxIdleConnsPerHost: {{ .clients.authorizationServer.oauth.http.maxIdleConnsPerHost }}
+            idleConnTimeout: {{ .clients.authorizationServer.oauth.http.idleConnTimeout }}
+            timeout: {{ .clients.authorizationServer.oauth.http.timeout }}
+            tls:
+              {{- $oauthHttpClientTls := .clients.authorizationServer.oauth.http.tls }}
+              {{- include "plgd-cloud.certificateConfig" (list $ $oauthHttpClientTls $coapGatewayServiceCert) | indent 12 }}
+              useSystemCAPool: {{ .clients.authorizationServer.oauth.http.tls.useSystemCAPool }}
+      resourceAggregate:
+        grpc:
+          {{- $resourceAggregate := .clients.resourceAggregate.grpc.address }}
+          address:{{ printf " " }}{{- include "plgd-cloud.resourceAggregateAddress" (list $ $resourceAggregate ) | quote }}
+          keepAlive:
+            time: {{ .clients.resourceAggregate.grpc.keepAlive.time }}
+            timeout: {{ .clients.resourceAggregate.grpc.keepAlive.timeout }}
+            permitWithoutStream: {{ .clients.resourceAggregate.grpc.keepAlive.permitWithoutStream }}
+          tls:
+            {{- $raClientTls := .clients.resourceAggregate.grpc.tls }}
+            {{- include "plgd-cloud.certificateConfig" (list $ $raClientTls $coapGatewayServiceCert) | indent 10 }}
+            useSystemCAPool: {{ .clients.resourceAggregate.grpc.tls.useSystemCAPool }}
+        deviceStatusExpiration:
+          enabled: {{ .clients.resourceAggregate.deviceStatusExpiration.enabled }}
+          expiresIn: {{ .clients.resourceAggregate.deviceStatusExpiration.expiresIn }}
+      resourceDirectory:
+        grpc:
+          {{- $resourceDirectory := .clients.resourceDirectory.grpc.address }}
+          address:{{ printf " " }}{{- include "plgd-cloud.resourceDirectoryAddress" (list $ $resourceDirectory ) | quote }}
+          keepAlive:
+            time: {{ .clients.resourceDirectory.grpc.keepAlive.time }}
+            timeout: {{ .clients.resourceDirectory.grpc.keepAlive.timeout }}
+            permitWithoutStream: {{ .clients.resourceDirectory.grpc.keepAlive.permitWithoutStream }}
+          tls:
+            {{- $rdClientTls := .clients.resourceDirectory.grpc.tls }}
+            {{- include "plgd-cloud.certificateConfig" (list $ $rdClientTls $coapGatewayServiceCert) | indent 10 }}
+            useSystemCAPool: {{ .clients.resourceDirectory.grpc.tls.useSystemCAPool }}
+    taskQueue:
+      goPoolSize: {{ .taskQueue.goPoolSize }}
+      size: {{ .taskQueue.size }}
+      maxIdleTime: {{ .taskQueue.maxIdleTime }}
+  {{- end }}
+{{- end }}
