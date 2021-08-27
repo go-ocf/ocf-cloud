@@ -117,7 +117,7 @@ func Test_ownerCache_Subscribe(t *testing.T) {
 	}
 
 	time.Sleep(time.Millisecond * 100)
-	cacheDevices, ok := cache.GetDevices(owner)
+	cacheDevices, err := cache.GetDevices(ctx)
 	assert.Empty(t, cacheDevices)
 	assert.False(t, ok)
 

@@ -238,38 +238,26 @@ func (c *OwnerCache) Update(ctx context.Context) (added []string, removed []stri
 	return s.syncDevicesLocked(ctx, owner, c)
 }
 
-// Returns locked, non-expired owner subject from cache
-func (c *OwnerCache) getValidLockedOwnerSubject(owner string) (*ownerSubject, bool) {
-	var s *ownerSubject
-	now := time.Now()
-	c.owners.LoadWithFunc(owner, func(value interface{}) interface{} {
-		s = value.(*ownerSubject)
-		s.Lock()
-		return s
-	})
-	if s == nil {
-		return nil, false
-	}
-	if !s.devicesSynced {
-		s.Unlock()
-		return nil, false
-	}
-	s.validUntil = now.Add(c.expiration)
-	return s, true
-}
-
 // GetDevices provides the owner of the cached device. If the cache does not expire, the cache expiration is extended.
-// When ok == false you need to Update to refresh cache.
-func (c *OwnerCache) GetDevices(owner string) (devices []string, ok bool) {
-	s, ok := c.getValidLockedOwnerSubject(owner)
-	if !ok {
-		return nil, false
+func (c *OwnerCache) GetDevices(ctx context.Context) (devices []string, err error) {
+	owner, err := kitNetGrpc.OwnerFromTokenMD(ctx, c.ownerClaim)
+	if err != nil {
+		return nil, kitNetGrpc.ForwardFromError(codes.InvalidArgument, err)
 	}
+	now := time.Now()
+	s := c.getOrCreateLockedOwnerSubject(owner)
 	defer s.Unlock()
+	if !s.devicesSynced {
+		if _, _, err := s.syncDevicesLocked(ctx, owner, c); err != nil {
+			return nil, err
+		}
+	} else {
+		s.validUntil = now.Add(c.expiration)
+	}
 
 	devices = make([]string, len(s.devices))
 	copy(devices, s.devices)
-	return devices, true
+	return devices, nil
 }
 
 // Check provided list of device ids and return only ids owned by the user
@@ -279,12 +267,15 @@ func (c *OwnerCache) OwnsDevices(ctx context.Context, devices []string) ([]strin
 		return nil, kitNetGrpc.ForwardFromError(codes.InvalidArgument, err)
 	}
 
+	now := time.Now()
 	s := c.getOrCreateLockedOwnerSubject(owner)
 	defer s.Unlock()
 	if !s.devicesSynced {
 		if _, _, err := s.syncDevicesLocked(ctx, owner, c); err != nil {
 			return nil, err
 		}
+	} else {
+		s.validUntil = now.Add(c.expiration)
 	}
 
 	deviceIds := strings.MakeSortedSlice(devices)
